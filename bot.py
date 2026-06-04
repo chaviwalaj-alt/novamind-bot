@@ -1,13 +1,14 @@
 import os
 import logging
-import google.generativeai as genai
+import httpx
+import json
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
 logging.basicConfig(level=logging.INFO)
 
-genai.configure(api_key=os.environ["GEMINI_API_KEY"])
-model = genai.GenerativeModel("gemini-1.5-flash")
+GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
+GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
 
 chat_histories = {}
 
@@ -19,11 +20,19 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_text = update.message.text
 
     if user_id not in chat_histories:
-        chat_histories[user_id] = model.start_chat(history=[])
+        chat_histories[user_id] = []
+
+    chat_histories[user_id].append({"role": "user", "parts": [{"text": user_text}]})
+
+    payload = {"contents": chat_histories[user_id]}
 
     try:
-        response = chat_histories[user_id].send_message(user_text)
-        await update.message.reply_text(response.text)
+        async with httpx.AsyncClient() as client:
+            response = await client.post(GEMINI_URL, json=payload, timeout=30)
+            result = response.json()
+            reply = result["candidates"][0]["content"]["parts"][0]["text"]
+            chat_histories[user_id].append({"role": "model", "parts": [{"text": reply}]})
+            await update.message.reply_text(reply)
     except Exception as e:
         await update.message.reply_text("⚠️ Something went wrong. Please try again.")
         logging.error(e)
