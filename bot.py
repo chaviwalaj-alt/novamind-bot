@@ -17,7 +17,7 @@ class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"NovaMind is alive!")
+        self.wfile.write(b"OK")
     def log_message(self, format, *args):
         pass
 
@@ -37,7 +37,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         async with httpx.AsyncClient() as client:
             r = await client.post(GEMINI_URL, json={"contents": chat_histories[user_id]}, timeout=30)
-            reply = r.json()["candidates"][0]["content"]["parts"][0]["text"]
+            data = r.json()
+            if "candidates" not in data:
+                error_msg = data.get("error", {}).get("message", "Unknown error")
+                await update.message.reply_text(f"⚠️ Gemini error: {error_msg}")
+                chat_histories[user_id].pop()
+                return
+            reply = data["candidates"][0]["content"]["parts"][0]["text"]
             chat_histories[user_id].append({"role": "model", "parts": [{"text": reply}]})
             await update.message.reply_text(reply)
     except Exception as e:
@@ -50,11 +56,11 @@ async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     threading.Thread(target=run_health_server, daemon=True).start()
-    app = Application.builder().token(os.environ["TELEGRAM_TOKEN"]).build()
+    app = Application.builder().token(os.environ["TELEGRAM_TOKEN"]).drop_pending_updates(True).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("reset", reset))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    app.run_polling()
+    app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
     main()
